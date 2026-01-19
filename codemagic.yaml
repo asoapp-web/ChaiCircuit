@@ -13,22 +13,72 @@ workflows:
         BUNDLE_ID: "com.ChaiCircuit"
         XCODE_SCHEME: "ChaiCircuit"
         APP_STORE_APPLE_ID: 6756029932
+        # Добавляем новые переменные для версий
+        NEW_MARKETING_VERSION: "1.1"
+        NEW_BUILD_NUMBER: "2"
       xcode: latest
     scripts:
       - name: Set up provisioning profiles settings on Xcode project
         script: xcode-project use-profiles
-      - name: Increment build number
+      
+      - name: FORCE UPDATE VERSIONS
         script: |
           cd $CM_BUILD_DIR
-          LATEST_BUILD_NUMBER=$(app-store-connect get-latest-app-store-build-number "$APP_STORE_APPLE_ID")
-          agvtool new-version -all $(($LATEST_BUILD_NUMBER + 1))
+          echo "=== RADICAL VERSION UPDATE ==="
+          echo "Setting marketing version to: $NEW_MARKETING_VERSION"
+          echo "Setting build number to: $NEW_BUILD_NUMBER"
+          
+          # 1. ОБНОВЛЯЕМ ВСЕ Info.plist ФАЙЛЫ
+          echo "=== Updating ALL Info.plist files ==="
+          find . -name "Info.plist" -type f | while read PLIST; do
+            echo "Processing: $PLIST"
+            
+            # Получаем текущие значения
+            CURRENT_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST" 2>/dev/null || echo "1.0")
+            CURRENT_BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST" 2>/dev/null || echo "1")
+            echo "  Current: version=$CURRENT_VERSION, build=$CURRENT_BUILD"
+            
+            # Устанавливаем новые значения
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $NEW_MARKETING_VERSION" "$PLIST" 2>/dev/null && echo "  ✓ Set version to $NEW_MARKETING_VERSION" || echo "  ✗ Failed to set version"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD_NUMBER" "$PLIST" 2>/dev/null && echo "  ✓ Set build to $NEW_BUILD_NUMBER" || echo "  ✗ Failed to set build"
+            
+            # Проверяем
+            CHECK_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST" 2>/dev/null || echo "ERROR")
+            CHECK_BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST" 2>/dev/null || echo "ERROR")
+            echo "  Updated: version=$CHECK_VERSION, build=$CHECK_BUILD"
+            echo "  ---"
+          done
+          
+          # 2. ОБНОВЛЯЕМ ЧЕРЕЗ AGVTOOL (на всякий случай)
+          echo "=== Updating via agvtool ==="
+          agvtool new-marketing-version "$NEW_MARKETING_VERSION" 2>/dev/null || echo "agvtool marketing version command completed"
+          agvtool new-version -all "$NEW_BUILD_NUMBER" 2>/dev/null || echo "agvtool build version command completed"
+          
+          echo "=== FINAL VERIFICATION ==="
+          echo "From agvtool:"
+          agvtool what-marketing-version 2>/dev/null || echo "Cannot get marketing version"
+          agvtool what-version 2>/dev/null || echo "Cannot get build version"
+          
+          # Проверяем первый найденный Info.plist
+          FIRST_PLIST=$(find . -name "Info.plist" -type f | head -1)
+          if [ -f "$FIRST_PLIST" ]; then
+            echo "From first Info.plist:"
+            echo "  Version: $(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$FIRST_PLIST" 2>/dev/null || echo 'ERROR')"
+            echo "  Build: $(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$FIRST_PLIST" 2>/dev/null || echo 'ERROR')"
+          fi
+      
       - name: Build ipa for distribution
         script: |
+          echo "=== BUILDING IPA ==="
+          echo "Expected: Version $NEW_MARKETING_VERSION, Build $NEW_BUILD_NUMBER"
+          
           xcode-project build-ipa \
             --project "ChaiCircuit.xcodeproj" \
             --scheme "$XCODE_SCHEME"
+    
     artifacts:
       - build/ios/ipa/*.ipa
+    
     publishing:
       app_store_connect: 
         auth: integration
